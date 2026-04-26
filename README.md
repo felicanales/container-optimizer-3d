@@ -21,11 +21,13 @@ Desde la carpeta raiz del proyecto, instalar dependencias del backend:
 
 ```powershell
 cd backend
-python -m venv .venv
+if (!(Test-Path .venv)) { python -m venv .venv }
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 cd ..
 ```
+
+Nota: `python -m venv .venv` se ejecuta solo la primera vez. Si `.venv` ya existe, no hay que crearlo de nuevo.
 
 Instalar dependencias del frontend:
 
@@ -37,7 +39,9 @@ cd ..
 
 ### Levantar la app
 
-Abrir una terminal para el backend:
+Abrir una terminal para el backend.
+
+Si el prompt termina en `Container Optimizer 3D>`:
 
 ```powershell
 cd backend
@@ -45,10 +49,25 @@ cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-Abrir otra terminal para el frontend:
+Si el prompt ya termina en `Container Optimizer 3D\backend>`:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
+```
+
+Abrir otra terminal para el frontend.
+
+Si el prompt termina en `Container Optimizer 3D>`:
 
 ```powershell
 cd frontend
+npm run dev
+```
+
+Si el prompt ya termina en `Container Optimizer 3D\frontend>`:
+
+```powershell
 npm run dev
 ```
 
@@ -191,6 +210,15 @@ No incluye aun:
 ## Troubleshooting
 
 Si el frontend no puede simular, verificar que el backend este corriendo en `http://localhost:8000`.
+
+Si aparece un error como `No se encuentra la ruta ... backend\backend`, significa que ya estabas dentro de la carpeta `backend`. En ese caso no ejecutes `cd backend`; sigue con:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
+```
+
+Si aparece `Unable to copy ... venvlauncher.exe ... .venv\Scripts\python.exe`, normalmente es porque `.venv` ya existe o esta en uso. No lo recrees; activa el entorno y continua con `pip install -r requirements.txt`.
 
 Si el puerto esta ocupado en Windows:
 
