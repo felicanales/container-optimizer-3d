@@ -21,6 +21,7 @@ out/
 # Build files
 dist/
 build/
+.logs/
 
 # IDE
 .vscode/
