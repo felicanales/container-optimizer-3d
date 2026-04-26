@@ -8,9 +8,26 @@ export type ContainerInput = Dimensions & {
   max_weight?: number | null;
 };
 
+export type ProductShape = "box" | "cylinder" | "pyramid" | "custom";
+
+export type ShapeProfilePoint = {
+  height_ratio: number;
+  width_ratio: number;
+  depth_ratio: number;
+};
+
+export type ShapeConfig = {
+  top_width_ratio: number;
+  top_depth_ratio: number;
+  radial_segments: number;
+  profile?: ShapeProfilePoint[] | null;
+};
+
 export type ProductInput = Dimensions & {
   id?: string | null;
   name: string;
+  shape: ProductShape;
+  shape_config?: ShapeConfig | null;
   weight: number;
   quantity: number;
   fragile: boolean;
@@ -36,6 +53,8 @@ export type Placement = {
   position: Position;
   dimensions: Dimensions;
   original_dimensions: Dimensions;
+  shape: ProductShape;
+  shape_config?: ShapeConfig | null;
   weight: number;
   fragile: boolean;
   stackable: boolean;
@@ -47,10 +66,18 @@ export type UnloadedItem = {
   product_id: string;
   product_name: string;
   dimensions: Dimensions;
+  shape: ProductShape;
+  shape_config?: ShapeConfig | null;
   weight: number;
   fragile: boolean;
   stackable: boolean;
+  allow_rotations: boolean;
   reason: string;
+  requested_quantity: number;
+  loaded_quantity: number;
+  unloaded_quantity: number;
+  explanation: string;
+  suggestion: string;
 };
 
 export type SimulationMetrics = {

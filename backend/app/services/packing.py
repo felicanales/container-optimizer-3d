@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from itertools import permutations
 
@@ -50,6 +51,7 @@ class PlacementAttempt:
 
 
 def run_simulation(payload: SimulationRequest) -> SimulationResponse:
+    requested_quantities = _requested_quantities(payload.products)
     free_spaces = [
         FreeSpace(
             x=0,
@@ -93,6 +95,7 @@ def run_simulation(payload: SimulationRequest) -> SimulationResponse:
     loaded_volume = sum(placement.dimensions.volume for placement in placements)
     container_volume = payload.container.volume
     occupancy = (loaded_volume / container_volume) * 100 if container_volume else 0
+    unloaded = _annotate_unloaded(unloaded, placements, requested_quantities, payload.container)
 
     return SimulationResponse(
         container=payload.container,
@@ -114,7 +117,7 @@ def _expand_products(products: list[ProductInput]) -> list[PackItem]:
     items: list[PackItem] = []
 
     for index, product in enumerate(products, start=1):
-        product_id = product.id or f"{_slugify(product.name) or 'product'}-{index}"
+        product_id = _product_id(product, index)
         for quantity_index in range(1, product.quantity + 1):
             items.append(
                 PackItem(
@@ -125,6 +128,14 @@ def _expand_products(products: list[ProductInput]) -> list[PackItem]:
             )
 
     return items
+
+
+def _requested_quantities(products: list[ProductInput]) -> dict[str, int]:
+    return {_product_id(product, index): product.quantity for index, product in enumerate(products, start=1)}
+
+
+def _product_id(product: ProductInput, index: int) -> str:
+    return product.id or f"{_slugify(product.name) or 'product'}-{index}"
 
 
 def _find_placement(
@@ -162,6 +173,8 @@ def _find_placement(
                     height=item.product.height,
                     depth=item.product.depth,
                 ),
+                shape=item.product.shape,
+                shape_config=item.product.shape_config,
                 weight=item.product.weight,
                 fragile=item.product.fragile,
                 stackable=item.product.stackable,
@@ -327,10 +340,103 @@ def _unloaded_item(item: PackItem, reason: str) -> UnloadedItem:
         product_id=item.product_id,
         product_name=item.product.name,
         dimensions=Dimensions(width=item.product.width, height=item.product.height, depth=item.product.depth),
+        shape=item.product.shape,
+        shape_config=item.product.shape_config,
         weight=item.product.weight,
         fragile=item.product.fragile,
         stackable=item.product.stackable,
+        allow_rotations=item.product.allow_rotations,
         reason=reason,
+    )
+
+
+def _annotate_unloaded(
+    unloaded: list[UnloadedItem],
+    placements: list[Placement],
+    requested_quantities: dict[str, int],
+    container: Dimensions,
+) -> list[UnloadedItem]:
+    if not unloaded:
+        return unloaded
+
+    loaded_counts = Counter(placement.product_id for placement in placements)
+    unloaded_counts = Counter(item.product_id for item in unloaded)
+
+    return [
+        item.model_copy(
+            update={
+                "requested_quantity": requested_quantities.get(item.product_id, loaded_counts[item.product_id] + unloaded_counts[item.product_id]),
+                "loaded_quantity": loaded_counts[item.product_id],
+                "unloaded_quantity": unloaded_counts[item.product_id],
+                "explanation": _unloaded_explanation(
+                    item,
+                    loaded_counts[item.product_id],
+                    requested_quantities.get(item.product_id, loaded_counts[item.product_id] + unloaded_counts[item.product_id]),
+                    container,
+                ),
+                "suggestion": _unloaded_suggestion(
+                    item,
+                    loaded_counts[item.product_id],
+                    requested_quantities.get(item.product_id, loaded_counts[item.product_id] + unloaded_counts[item.product_id]),
+                    container,
+                ),
+            }
+        )
+        for item in unloaded
+    ]
+
+
+def _unloaded_explanation(item: UnloadedItem, loaded_quantity: int, requested_quantity: int, container: Dimensions) -> str:
+    if item.reason == "weight_limit_exceeded":
+        return (
+            f"Entraron {loaded_quantity} de {requested_quantity}. "
+            "Las unidades restantes exceden el peso maximo disponible del contenedor."
+        )
+
+    if item.reason == "no_available_space" and not _item_dimensions_can_fit_container(item, container):
+        return (
+            f"Entraron {loaded_quantity} de {requested_quantity}. "
+            "Este producto no cabe en el contenedor con sus dimensiones actuales."
+        )
+
+    if item.reason == "no_available_space":
+        return (
+            f"Entraron {loaded_quantity} de {requested_quantity}. "
+            "No quedo un espacio libre compatible con estas dimensiones y restricciones."
+        )
+
+    return f"Entraron {loaded_quantity} de {requested_quantity}."
+
+
+def _unloaded_suggestion(item: UnloadedItem, loaded_quantity: int, requested_quantity: int, container: Dimensions) -> str:
+    missing = max(requested_quantity - loaded_quantity, 0)
+
+    if item.reason == "weight_limit_exceeded":
+        return (
+            f"Reduce la cantidad en {missing}, baja el peso por unidad o usa un contenedor con mayor capacidad de peso."
+        )
+
+    if item.reason == "no_available_space" and not _item_dimensions_can_fit_container(item, container):
+        if item.allow_rotations:
+            return "Reduce una de sus dimensiones o usa un contenedor mas grande."
+        return "Permite rotaciones, reduce una de sus dimensiones o usa un contenedor mas grande."
+
+    if item.fragile or not item.stackable:
+        return (
+            f"Reduce la cantidad en {missing}, usa un contenedor mas grande o revisa si el producto puede ser apilable."
+        )
+
+    return f"Reduce la cantidad en {missing}, usa un contenedor mas grande o prueba dimensiones/rotaciones diferentes."
+
+
+def _item_dimensions_can_fit_container(item: UnloadedItem, container: Dimensions) -> bool:
+    dimensions = (item.dimensions.width, item.dimensions.height, item.dimensions.depth)
+    candidates = set(permutations(dimensions, 3)) if item.allow_rotations else {dimensions}
+    return any(
+        width <= container.width + EPSILON
+        and height <= container.height + EPSILON
+        and depth <= container.depth + EPSILON
+        for width, height, depth in candidates
     )
 
 

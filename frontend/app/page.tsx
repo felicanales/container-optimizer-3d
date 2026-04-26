@@ -3,8 +3,11 @@
 import { Plus, Play, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { CargoScene } from "@/components/CargoScene";
+import { ShapeProfileEditor } from "@/components/ShapeProfileEditor";
 import { runSimulation } from "@/lib/api";
-import type { ContainerInput, ProductInput, SimulationResponse } from "@/types/simulation";
+import { getProductColor } from "@/lib/productColors";
+import { clampNumber, defaultShapeConfig, normalizeShapeConfig } from "@/lib/shapeProfiles";
+import type { ContainerInput, ProductInput, ProductShape, SimulationResponse } from "@/types/simulation";
 
 type ProductForm = ProductInput & {
   localId: string;
@@ -17,6 +20,13 @@ const defaultContainer: ContainerInput = {
   max_weight: 24000,
 };
 
+const shapeOptions: { value: ProductShape; label: string }[] = [
+  { value: "box", label: "Caja" },
+  { value: "cylinder", label: "Cilindro" },
+  { value: "pyramid", label: "Piramide" },
+  { value: "custom", label: "Personalizada" },
+];
+
 const defaultProducts: ProductForm[] = [
   {
     localId: "alfombra",
@@ -24,6 +34,8 @@ const defaultProducts: ProductForm[] = [
     width: 40,
     height: 40,
     depth: 180,
+    shape: "cylinder",
+    shape_config: { ...defaultShapeConfig, radial_segments: 32 },
     weight: 18,
     quantity: 8,
     fragile: false,
@@ -36,6 +48,8 @@ const defaultProducts: ProductForm[] = [
     width: 80,
     height: 55,
     depth: 80,
+    shape: "box",
+    shape_config: defaultShapeConfig,
     weight: 22,
     quantity: 4,
     fragile: false,
@@ -48,6 +62,8 @@ const defaultProducts: ProductForm[] = [
     width: 35,
     height: 35,
     depth: 45,
+    shape: "pyramid",
+    shape_config: defaultShapeConfig,
     weight: 6,
     quantity: 12,
     fragile: true,
@@ -65,12 +81,65 @@ export default function Home() {
 
   const groupedLoaded = useMemo(() => {
     if (!result) return [];
-    const totals = new Map<string, { name: string; count: number }>();
+    const totals = new Map<string, { id: string; name: string; count: number; color: string; label: string }>();
     for (const placement of result.placements) {
-      const current = totals.get(placement.product_id) ?? { name: placement.product_name, count: 0 };
+      const current =
+        totals.get(placement.product_id) ??
+        {
+          id: placement.product_id,
+          name: placement.product_name,
+          count: 0,
+          color: getProductColor(totals.size),
+          label: `P${totals.size + 1}`,
+        };
       current.count += 1;
       totals.set(placement.product_id, current);
     }
+    return Array.from(totals.values());
+  }, [result]);
+
+  const productColors = useMemo(
+    () => Object.fromEntries(groupedLoaded.map((item) => [item.id, item.color])),
+    [groupedLoaded],
+  );
+
+  const productLabels = useMemo(
+    () => Object.fromEntries(groupedLoaded.map((item) => [item.id, item.label])),
+    [groupedLoaded],
+  );
+
+  const groupedUnloaded = useMemo(() => {
+    if (!result) return [];
+
+    const totals = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        reason: string;
+        requestedQuantity: number;
+        loadedQuantity: number;
+        unloadedQuantity: number;
+        explanation: string;
+        suggestion: string;
+      }
+    >();
+
+    for (const item of result.unloaded) {
+      if (totals.has(item.product_id)) continue;
+
+      totals.set(item.product_id, {
+        id: item.product_id,
+        name: item.product_name,
+        reason: item.reason,
+        requestedQuantity: item.requested_quantity,
+        loadedQuantity: item.loaded_quantity,
+        unloadedQuantity: item.unloaded_quantity,
+        explanation: item.explanation,
+        suggestion: item.suggestion,
+      });
+    }
+
     return Array.from(totals.values());
   }, [result]);
 
@@ -114,6 +183,8 @@ export default function Home() {
         width: 50,
         height: 50,
         depth: 50,
+        shape: "box",
+        shape_config: defaultShapeConfig,
         weight: 10,
         quantity: 1,
         fragile: false,
@@ -200,81 +271,130 @@ export default function Home() {
             </div>
 
             <div className="mt-4 space-y-4">
-              {products.map((product) => (
-                <div key={product.localId} className="border-t border-[var(--line)] pt-4 first:border-t-0 first:pt-0">
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="input"
-                      value={product.name}
-                      onChange={(event) => updateProduct(product.localId, { name: event.target.value })}
-                      aria-label="Nombre del producto"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeProduct(product.localId)}
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--line)] bg-white text-[#9f1239]"
-                      title="Eliminar producto"
-                    >
-                      <Trash2 size={17} aria-hidden="true" />
-                    </button>
-                  </div>
+              {products.map((product) => {
+                const shape = product.shape ?? "box";
+                const shapeConfig = normalizeShapeConfig(product.shape_config);
 
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    <NumberField
-                      label="Ancho"
-                      value={product.width}
-                      onChange={(value) => updateProduct(product.localId, { width: value })}
-                    />
-                    <NumberField
-                      label="Alto"
-                      value={product.height}
-                      onChange={(value) => updateProduct(product.localId, { height: value })}
-                    />
-                    <NumberField
-                      label="Prof."
-                      value={product.depth}
-                      onChange={(value) => updateProduct(product.localId, { depth: value })}
-                    />
-                    <NumberField
-                      label="Kg"
-                      value={product.weight}
-                      onChange={(value) => updateProduct(product.localId, { weight: value })}
-                    />
-                    <NumberField
-                      label="Cant."
-                      value={product.quantity}
-                      onChange={(value) => updateProduct(product.localId, { quantity: Math.max(1, Math.round(value)) })}
-                    />
-                  </div>
+                return (
+                  <div key={product.localId} className="border-t border-[var(--line)] pt-4 first:border-t-0 first:pt-0">
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="input"
+                        value={product.name}
+                        onChange={(event) => updateProduct(product.localId, { name: event.target.value })}
+                        aria-label="Nombre del producto"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeProduct(product.localId)}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--line)] bg-white text-[#9f1239]"
+                        title="Eliminar producto"
+                      >
+                        <Trash2 size={17} aria-hidden="true" />
+                      </button>
+                    </div>
 
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={product.fragile}
-                        onChange={(event) => updateProduct(product.localId, { fragile: event.target.checked })}
-                      />
-                      Fragil
+                    <label className="mt-3 block">
+                      <span className="field-label">Forma</span>
+                      <select
+                        className="input"
+                        value={shape}
+                        onChange={(event) =>
+                          updateProduct(product.localId, {
+                            shape: event.target.value as ProductShape,
+                            shape_config: shapeConfig,
+                          })
+                        }
+                      >
+                        {shapeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     </label>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={product.stackable}
-                        onChange={(event) => updateProduct(product.localId, { stackable: event.target.checked })}
+
+                    {shape === "cylinder" ? (
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <NumberField
+                          label="Lados"
+                          value={shapeConfig.radial_segments}
+                          onChange={(value) =>
+                            updateProduct(product.localId, {
+                              shape_config: {
+                                ...shapeConfig,
+                                radial_segments: Math.round(clampNumber(value, 3, 64)),
+                              },
+                            })
+                          }
+                        />
+                      </div>
+                    ) : null}
+
+                    {shape === "custom" ? (
+                      <ShapeProfileEditor
+                        config={shapeConfig}
+                        onChange={(nextConfig) => updateProduct(product.localId, { shape_config: nextConfig })}
                       />
-                      Apilable
-                    </label>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={product.allow_rotations}
-                        onChange={(event) => updateProduct(product.localId, { allow_rotations: event.target.checked })}
+                    ) : null}
+
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <NumberField
+                        label="Ancho"
+                        value={product.width}
+                        onChange={(value) => updateProduct(product.localId, { width: value })}
                       />
-                      Rotar
-                    </label>
+                      <NumberField
+                        label="Alto"
+                        value={product.height}
+                        onChange={(value) => updateProduct(product.localId, { height: value })}
+                      />
+                      <NumberField
+                        label="Prof."
+                        value={product.depth}
+                        onChange={(value) => updateProduct(product.localId, { depth: value })}
+                      />
+                      <NumberField
+                        label="Kg"
+                        value={product.weight}
+                        onChange={(value) => updateProduct(product.localId, { weight: value })}
+                      />
+                      <NumberField
+                        label="Cant."
+                        value={product.quantity}
+                        onChange={(value) => updateProduct(product.localId, { quantity: Math.max(1, Math.round(value)) })}
+                      />
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={product.fragile}
+                          onChange={(event) => updateProduct(product.localId, { fragile: event.target.checked })}
+                        />
+                        Fragil
+                      </label>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={product.stackable}
+                          onChange={(event) => updateProduct(product.localId, { stackable: event.target.checked })}
+                        />
+                        Apilable
+                      </label>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={product.allow_rotations}
+                          onChange={(event) => updateProduct(product.localId, { allow_rotations: event.target.checked })}
+                        />
+                        Rotar
+                      </label>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </section>
@@ -291,7 +411,30 @@ export default function Home() {
             <Metric label="Peso" value={metrics ? `${metrics.loaded_weight} kg` : "0 kg"} />
           </div>
 
-          <CargoScene container={sceneContainer} placements={placements} />
+          <CargoScene
+            container={sceneContainer}
+            placements={placements}
+            productColors={productColors}
+            productLabels={productLabels}
+          />
+
+          <div className="border border-[var(--line)] bg-[var(--panel)] p-4">
+            <h2 className="text-base font-semibold">Leyenda del contenedor</h2>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-3">
+              {groupedLoaded.length ? (
+                groupedLoaded.map((item) => (
+                  <div key={item.id} className="flex min-h-10 items-center gap-2 border border-[var(--line)] px-3">
+                    <span className="h-4 w-4 shrink-0 border border-black/20" style={{ backgroundColor: item.color }} />
+                    <strong className="shrink-0">{item.label}</strong>
+                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                    <span className="text-[var(--muted)]">{item.count}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[var(--muted)]">Ejecuta una simulacion para ver los colores por producto.</p>
+              )}
+            </div>
+          </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
             <div className="border border-[var(--line)] bg-[var(--panel)] p-4">
@@ -299,8 +442,12 @@ export default function Home() {
               <div className="mt-3 space-y-2 text-sm">
                 {groupedLoaded.length ? (
                   groupedLoaded.map((item) => (
-                    <div key={item.name} className="flex items-center justify-between border-b border-[var(--line)] py-2 last:border-b-0">
-                      <span>{item.name}</span>
+                    <div key={item.id} className="flex items-center justify-between border-b border-[var(--line)] py-2 last:border-b-0">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="h-3 w-3 shrink-0 border border-black/20" style={{ backgroundColor: item.color }} />
+                        <strong className="shrink-0">{item.label}</strong>
+                        <span className="truncate">{item.name}</span>
+                      </span>
                       <strong>{item.count}</strong>
                     </div>
                   ))
@@ -313,13 +460,20 @@ export default function Home() {
             <div className="border border-[var(--line)] bg-[var(--panel)] p-4">
               <h2 className="text-base font-semibold">Productos no cargados</h2>
               <div className="mt-3 max-h-56 space-y-2 overflow-auto text-sm">
-                {result?.unloaded.length ? (
-                  result.unloaded.map((item) => (
-                    <div key={item.item_id} className="border-b border-[var(--line)] py-2 last:border-b-0">
-                      <div className="flex items-center justify-between gap-3">
-                        <span>{item.product_name}</span>
-                        <strong>{reasonLabel(item.reason)}</strong>
+                {groupedUnloaded.length ? (
+                  groupedUnloaded.map((item) => (
+                    <div key={item.id} className="border-b border-[var(--line)] py-3 last:border-b-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold">{item.name}</div>
+                          <div className="mt-1 text-[var(--muted)]">
+                            Caben {item.loadedQuantity} de {item.requestedQuantity}. Faltan {item.unloadedQuantity}.
+                          </div>
+                        </div>
+                        <strong className="shrink-0">{reasonLabel(item.reason)}</strong>
                       </div>
+                      <p className="mt-2 text-[var(--muted)]">{item.explanation}</p>
+                      <p className="mt-1 font-medium text-[#26312b]">Sugerencia: {item.suggestion}</p>
                     </div>
                   ))
                 ) : (
